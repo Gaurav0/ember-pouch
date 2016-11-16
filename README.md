@@ -1,10 +1,8 @@
-# Ember Pouch
-
-[![Build Status](https://travis-ci.org/nolanlawson/ember-pouch.svg)](https://travis-ci.org/nolanlawson/ember-pouch)
+# Ember Pouch [![Build Status](https://travis-ci.org/nolanlawson/ember-pouch.svg)](https://travis-ci.org/nolanlawson/ember-pouch) [![GitHub version](https://badge.fury.io/gh/nolanlawson%2Fember-pouch.svg)](https://badge.fury.io/gh/nolanlawson%2Fember-pouch) [![Ember Observer Score](https://emberobserver.com/badges/ember-pouch.svg)](https://emberobserver.com/addons/ember-pouch)
 
 [**Changelog**](#changelog)
 
-Ember Pouch is a PouchDB/CouchDB adapter for Ember Data 1.13+.
+Ember Pouch is a PouchDB/CouchDB adapter for Ember Data 2.0+. For older Ember Data versions use Ember Pouch version 3.2.2.
 
 With Ember Pouch, all of your app's data is automatically saved on the client-side using IndexedDB or WebSQL, and you just keep using the regular [Ember Data `store` API](http://emberjs.com/api/data/classes/DS.Store.html#method_all). This data may be automatically synced to a remote CouchDB (or compatible servers) using PouchDB replication.
 
@@ -20,7 +18,21 @@ For more on PouchDB, check out [pouchdb.com](http://pouchdb.com).
 
 ## Install and setup
 
-    ember install ember-pouch
+```bash
+ember install ember-pouch
+```
+
+For ember-data < 2.0:
+
+```bash
+ember install ember-pouch@3.2.2
+```
+
+For ember-cli < 1.13.0:
+
+```bash
+npm install ember-pouch@3.2.2 --save-dev
+```
 
 This provides
 - `import PouchDB from 'pouchdb'`
@@ -69,7 +81,7 @@ var db = new PouchDB('local_pouch');
 
 db.sync(remote, {
    live: true,   // do a live, ongoing sync
-   retry: true   // retry if the conection is lost
+   retry: true   // retry if the connection is lost
 });
 
 export default Adapter.extend({
@@ -111,7 +123,211 @@ Now you can store your localDb and remoteDb names in your ember-cli's config.  J
 
 ```javascript
 ENV.emberPouch.localDb = 'test';
-ENV.emberPouch.remoteDB = 'http://localhost:5984/my_couch';
+ENV.emberPouch.remoteDb = 'http://localhost:5984/my_couch';
+```
+
+## Relationships
+
+EmberPouch supports both `hasMany` and `belongsTo` relationships.
+
+### Saving
+
+When saving a `hasMany` - `belongsTo` relationship, both sides of the relationship (the child and the parent) must be saved. Note that the parent needs to have been saved at least once prior to adding children to it.
+
+```javascript
+// app/routes/post/index.js
+import Ember from 'ember';
+
+export default Ember.Route.extend({
+  model(params){
+    //We are getting a post that already exists
+    return this.store.findRecord('post',  params.post_id);
+  },
+
+  actions:{
+    addComment(comment, author){
+      //Create the comment
+      const comment = this.store.createRecord('comment',{
+        comment: comment,
+        author: author
+      });
+      //Get our post
+      const post = this.controller.get('model');
+      //Add our comment to our existing post
+      post.get('comments').pushObject(comment);
+      //Save the child then the parent
+      comment.save().then(() => post.save());
+    }
+  }
+});
+
+```
+
+### Removing
+
+When removing a `hasMany` - `belongsTo` relationship, the children must be removed prior to the parent being removed.
+
+```javascript
+// app/routes/posts/admin/index.js
+import Ember from 'ember';
+
+export default Ember.Route.extend({
+  model(){
+    //We are getting all posts for some sort of list
+    return this.store.findAll('post');
+  },
+
+  actions:{
+    deletePost(post){
+      //collect the promises for deletion
+      let deletedComments = [];
+      //get and destroy the posts comments
+      post.get('comments').then((comments) => {
+        comments.map((comment) => {
+          deletedComments.push(comment.destroyRecord());
+        });
+      });
+      //Wait for comments to be destroyed then destroy the post
+      Ember.RSVP.all(deletedComments).then(() => {
+        post.destroyRecord();
+      });
+    }
+  }
+});
+```
+
+### Query and QueryRecord
+
+query and queryRecord are relying on [pouchdb-find](https://github.com/nolanlawson/pouchdb-find)
+
+### db.createIndex(index [, callback])
+
+Create an index if it doesn't exist.
+
+```javascript
+// app/adapters/application.js
+function createDb() {
+  ...
+
+  db.createIndex({
+    index: {
+      fields: ['data.name']
+    }
+  }).then((result) => {
+    // {'result': 'created'} index was created
+  });
+
+  return db;
+};
+```
+
+### store.query(model, options)
+
+Find all docs where doc.name === 'Mario'
+
+```javascript
+// app/routes/smasher/index.js
+import Ember from 'ember';
+
+export default Ember.Route.extend({
+  model() {
+    return this.store.query('smasher',  {
+      filter: { name: 'Mario' }
+    });
+  }
+});
+```
+
+Find all docs where doc.name === 'Mario' and doc.debut > 1990:
+
+```javascript
+// app/routes/smasher/index.js
+import Ember from 'ember';
+
+export default Ember.Route.extend({
+  model() {
+    return this.store.query('smasher',  {
+      filter: {
+        name: 'Mario'
+        debut: { $gt: 1990 }
+      }
+    });
+  }
+});
+```
+
+Sorted by doc.debut descending.
+
+```javascript
+// app/routes/smasher/index.js
+import Ember from 'ember';
+
+export default Ember.Route.extend({
+  model() {
+    return this.store.query('smasher',  {
+      filter: {
+        name: 'Mario'
+        sort: [
+          { debut: 'desc' }
+        ]
+      }
+    })
+  }
+});
+```
+
+### store.queryRecord(model, options)
+
+Find one document where doc.name === 'Mario'
+
+```javascript
+// app/routes/smasher/index.js
+import Ember from 'ember';
+
+export default Ember.Route.extend({
+  model() {
+    return this.store.queryRecord('smasher',  {
+      filter: { name: 'Mario' }
+    });
+  }
+});
+```
+
+## Attachments
+
+`Ember-Pouch` provides an `attachment` transform for your models, which makes working with attachments as simple as working with any other field.
+
+Add a `DS.attr('attachment')` field to your model. Provide a default value for it to be an empty array.
+
+```js
+// myapp/models/photo-album.js
+export default DS.Model.extend({
+  photos: DS.attr('attachment', {
+    defaultValue: function() {
+      return [];
+    }
+  });
+});
+```
+
+Here, instances of `PhotoAlbum` have a `photos` field, which is an array of plain `Ember.Object`s, which have a `.name` and `.content_type`. Non-stubbed attachment also have a `.data` field; and stubbed attachments have a `.stub` instead.
+```handlebars
+<ul>
+  {{#each myalbum.photos as |photo|}}
+    <li>{{photo.name}}</li>
+  {{/each}}
+</ul>
+```
+
+Attach new files by adding an `Ember.Object` with a `.name`, `.content_type` and `.data` to array of attachments.
+
+```js
+// somewhere in your controller/component:
+myAlbum.get('photos').addObject(Ember.Object.create({
+  'name': 'kitten.jpg',
+  'content_type': 'image/jpg',
+  'data': btoa('hello world') // base64-encoded `String`, or a DOM `Blob`, or a `File`
+}));
 ```
 
 ## Sample app
@@ -137,7 +353,17 @@ Out of the box, ember-pouch includes a PouchDB [change listener](http://pouchdb.
 
 However, ember-pouch does not automatically load new records that arrive during a sync. The records are saved in the local database, but **ember-data is not told to load them into memory**. Automatically loading every new record works well with a small number of records and a limited number of models. As an app grows, automatically loading every record will negatively impact app responsiveness during syncs (especially the first sync). To avoid puzzling slowdowns, ember-pouch only automatically reloads records you have already used ember-data to load.
 
-If you have a model or two that you know will always have a small number of records, you can write your own change listener to tell ember-data to automatically load them into memory as they arrive.
+If you have a model or two that you know will always have a small number of records, you can tell ember-data to automatically load them into memory as they arrive. Your PouchAdapter subclass has a method `unloadedDocumentChanged`, which is called when a document is received during sync that has not been loaded into the ember-data store. In your subclass, you can implement the following to load it automatically:
+
+```js
+  unloadedDocumentChanged: function(obj) {
+    let store = this.get('store');
+    let recordTypeName = this.getRecordTypeName(store.modelFor(obj.type));
+    this.get('db').rel.find(recordTypeName, obj.id).then(function(doc) {
+      store.pushPayload(recordTypeName, doc);
+    });
+  },
+```
 
 ### Plugins
 
@@ -238,7 +464,7 @@ function changeProjectDatabase(dbName, dbUser, dbPassword) {
       // this is where we told the adapter to change the current database.
       adapter.changeDb(db);
     }
-  )    
+  )
 }
 ```
 
@@ -272,7 +498,23 @@ This project was originally based on the [ember-data-hal-adapter](https://github
 And of course thanks to all our wonderful contributors, [here](https://github.com/nolanlawson/ember-pouch/graphs/contributors) and [in Relational Pouch](https://github.com/nolanlawson/relational-pouch/graphs/contributors)!
 
 ## Changelog
-
+* **4.0.3**
+  - Fixes [#158](https://github.com/nolanlawson/ember-pouch/pull/158)
+* **4.0.2**
+  - Updated ember-cli fixes and some minor changes [#147](https://github.com/nolanlawson/ember-pouch/pull/147)
+  - Added Version badge and Ember Observer badge [#142](https://github.com/nolanlawson/ember-pouch/pull/142)
+* **4.0.0**
+  - Add support for Attachments [#135](https://github.com/nolanlawson/ember-pouch/pull/135)
+  - Implement glue code for query and queryRecord using pouchdb-find [#130](https://github.com/nolanlawson/ember-pouch/pull/130)
+* **3.2.2**
+  - Update Bower dependencies [#137](https://github.com/nolanlawson/ember-pouch/pull/137)
+  - Correct import of Ember Data model blueprint [#131](https://github.com/nolanlawson/ember-pouch/pull/131)
+* **3.2.1**
+  - Fix(Addon): Call super in init [#129](https://github.com/nolanlawson/ember-pouch/pull/129)
+* **3.2.0**
+  - Make adapter call a hook when encountering a change for a record that is not yet loaded [#108](https://github.com/nolanlawson/ember-pouch/pull/108)
+* **3.1.1**
+  - Bugfix for hasMany relations by [@backspace](https://github.com/backspace) ([#111](https://github.com/nolanlawson/ember-pouch/pull/111)).
 * **3.1.0**
   - Database can now be dynamically switched on the adapter ([#89](https://github.com/nolanlawson/ember-pouch/pull/89)). Thanks to [@olivierchatry](https://github.com/olivierchatry) for this!
   - Various bugfixes by [@backspace](https://github.com/backspace), [@jkleinsc](https://github.com/jkleinsc), [@rsutphin](https://github.com/rsutphin), [@mattmarcum](https://github.com/mattmarcum), [@broerse](https://github.com/broerse), and [@olivierchatry](https://github.com/olivierchatry). See [the full commit log](https://github.com/nolanlawson/ember-pouch/compare/7c216311ffacd2f08b57df4fe34d49f4e7c373f1...v3.1.0) for details. Thank you!
